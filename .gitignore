@@ -1,7 +1,0 @@
-node_modules/
-.env
-.DS_Store
-npm-debug.log
-PROMPT_FOR_CODEX.md
-scripts
-seed.js
