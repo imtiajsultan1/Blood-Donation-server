@@ -3,6 +3,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const BloodRequest = require("../models/BloodRequest");
 const Donor = require("../models/Donor");
+const Notification = require("../models/Notification");
+const AuditLog = require("../models/AuditLog");
 const auth = require("../middleware/authMiddleware");
 const requireAdmin = require("../middleware/roleMiddleware");
 
@@ -24,6 +26,7 @@ const findMatchingDonors = async (requestDoc, viewerRole, viewerId) => {
     willingToDonate: true,
     bloodGroup: requestDoc.bloodGroup,
     visibility: { $in: allowedVisibilities(viewerRole) },
+    isDeleted: false,
   };
 
   if (requestDoc.city) {
@@ -34,7 +37,8 @@ const findMatchingDonors = async (requestDoc, viewerRole, viewerId) => {
 
   // Filter by eligibility (90-day rule) and shape data based on viewer.
   const eligibleDonors = donors.filter((d) => d.isEligibleToDonate().eligible);
-  return eligibleDonors.map((d) => d.toSafeObject(viewerRole, viewerId));
+  const safeDonors = eligibleDonors.map((d) => d.toSafeObject(viewerRole, viewerId));
+  return { eligibleDonors, safeDonors };
 };
 
 // Create a blood request (open by default).
@@ -64,12 +68,30 @@ router.post("/", async (req, res) => {
     await bloodRequest.save();
 
     // Optionally return matching donors to the requester.
-    const matches = await findMatchingDonors(bloodRequest, req.user.role, req.user.id);
+    const { eligibleDonors, safeDonors } = await findMatchingDonors(
+      bloodRequest,
+      req.user.role,
+      req.user.id
+    );
+
+    // Create notifications for matching donors who allow contact.
+    for (const donor of eligibleDonors) {
+      if (donor.user && donor.allowRequestContact) {
+        await Notification.create({
+          user: donor.user,
+          donor: donor._id,
+          type: "request_match",
+          title: "Blood request match",
+          message: `A blood request matches your profile (${bloodRequest.bloodGroup} in ${bloodRequest.city}).`,
+          meta: { requestId: bloodRequest._id },
+        });
+      }
+    }
 
     return res.status(201).json({
       success: true,
       message: "Blood request created.",
-      data: { request: bloodRequest, matches },
+      data: { request: bloodRequest, matches: safeDonors },
     });
   } catch (error) {
     console.error("Create blood request error:", error);
@@ -80,7 +102,9 @@ router.post("/", async (req, res) => {
 // Get current user's blood requests.
 router.get("/me", async (req, res) => {
   try {
-    const requests = await BloodRequest.find({ user: req.user.id }).sort({ createdAt: -1 });
+    const requests = await BloodRequest.find({ user: req.user.id, isDeleted: false }).sort({
+      createdAt: -1,
+    });
     return res
       .status(200)
       .json({ success: true, message: "Your blood requests.", data: requests });
@@ -93,7 +117,9 @@ router.get("/me", async (req, res) => {
 // Admin: get all blood requests.
 router.get("/", requireAdmin, async (req, res) => {
   try {
-    const requests = await BloodRequest.find().populate("user", "name email role").sort({ createdAt: -1 });
+    const requests = await BloodRequest.find({ isDeleted: false })
+      .populate("user", "name email role")
+      .sort({ createdAt: -1 });
     return res
       .status(200)
       .json({ success: true, message: "All blood requests fetched.", data: requests });
@@ -118,7 +144,7 @@ router.put("/:id/status", async (req, res) => {
       return res.status(400).json({ success: false, message: "Status must be open, fulfilled, or cancelled." });
     }
 
-    const bloodRequest = await BloodRequest.findById(id);
+    const bloodRequest = await BloodRequest.findOne({ _id: id, isDeleted: false });
     if (!bloodRequest) {
       return res.status(404).json({ success: false, message: "Blood request not found." });
     }
@@ -130,6 +156,14 @@ router.put("/:id/status", async (req, res) => {
 
     bloodRequest.status = status;
     await bloodRequest.save();
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: "update_request_status",
+      targetType: "Request",
+      targetId: bloodRequest._id.toString(),
+      details: { status },
+    });
 
     return res
       .status(200)
@@ -149,7 +183,7 @@ router.get("/:id/matches", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid request ID." });
     }
 
-    const bloodRequest = await BloodRequest.findById(id);
+    const bloodRequest = await BloodRequest.findOne({ _id: id, isDeleted: false });
     if (!bloodRequest) {
       return res.status(404).json({ success: false, message: "Blood request not found." });
     }

@@ -31,6 +31,10 @@ const donorRoutes = require("./routes/donorRoutes");
 const donationRoutes = require("./routes/donationRoutes");
 const institutionRoutes = require("./routes/institutionRoutes");
 const requestRoutes = require("./routes/requestRoutes");
+const { authLimiter, searchLimiter } = require("./middleware/rateLimiter");
+const contactRoutes = require("./routes/contactRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 const app = express();
 
@@ -40,6 +44,10 @@ connectDB();
 // Basic middlewares for JSON parsing and CORS.
 app.use(cors());
 app.use(express.json());
+
+// Rate limit auth endpoints and public search.
+app.use("/api/auth", authLimiter);
+app.use("/api/donors/search", searchLimiter);
 
 // Simple root route to verify the API is running.
 app.get("/", (req, res) => {
@@ -54,6 +62,9 @@ app.use("/api/donors", donorRoutes);
 app.use("/api/donations", donationRoutes);
 app.use("/api/institutions", institutionRoutes);
 app.use("/api/requests", requestRoutes);
+app.use("/api/contact", contactRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Global error handler fallback (for unexpected errors).
 app.use((err, req, res, next) => {

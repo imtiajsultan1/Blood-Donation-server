@@ -5,6 +5,7 @@ const Donation = require("../models/Donation");
 const Donor = require("../models/Donor");
 const Institution = require("../models/Institution");
 const auth = require("../middleware/authMiddleware");
+const AuditLog = require("../models/AuditLog");
 
 const router = express.Router();
 
@@ -77,6 +78,14 @@ router.post("/", async (req, res) => {
       await institution.save();
     }
 
+    await AuditLog.create({
+      user: req.user.id,
+      action: "create_donation",
+      targetType: "Donation",
+      targetId: donation._id.toString(),
+      details: { donorId, institutionId },
+    });
+
     return res
       .status(201)
       .json({ success: true, message: "Donation recorded successfully.", data: donation });
@@ -124,6 +133,8 @@ router.get("/", async (req, res) => {
       }
     }
 
+    filters.isDeleted = false;
+
     const donations = await Donation.find(filters)
       .populate("donor", "fullName bloodGroup phone")
       .populate("institution", "name type")
@@ -136,6 +147,33 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Soft delete a donation (admin only).
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid donation ID." });
+    }
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Admin only." });
+    }
+    const donation = await Donation.findByIdAndUpdate(id, { isDeleted: true });
+    if (!donation) {
+      return res.status(404).json({ success: false, message: "Donation not found." });
+    }
+    await AuditLog.create({
+      user: req.user.id,
+      action: "delete_donation",
+      targetType: "Donation",
+      targetId: id,
+    });
+    return res.status(200).json({ success: true, message: "Donation deleted." });
+  } catch (error) {
+    console.error("Delete donation error:", error);
+    return res.status(500).json({ success: false, message: "Server error while deleting donation." });
+  }
+});
+
 // Get donation history for a specific donor.
 router.get("/donor/:donorId", async (req, res) => {
   try {
@@ -145,7 +183,7 @@ router.get("/donor/:donorId", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid donor ID." });
     }
 
-    const donations = await Donation.find({ donor: donorId })
+    const donations = await Donation.find({ donor: donorId, isDeleted: false })
       .populate("donor", "fullName bloodGroup phone")
       .populate("institution", "name type")
       .sort({ donationDate: -1 });

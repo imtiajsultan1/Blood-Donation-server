@@ -15,6 +15,7 @@ const bloodRequestSchema = new mongoose.Schema({
   requiredDate: { type: Date, required: true },
   contactPhone: { type: String, required: true },
   status: { type: String, enum: ["open", "fulfilled", "cancelled"], default: "open" },
+  isDeleted: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });

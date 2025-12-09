@@ -9,6 +9,7 @@ const donationSchema = new mongoose.Schema({
   units: { type: Number, default: 1 },
   location: { type: String },
   notes: { type: String },
+  isDeleted: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
 

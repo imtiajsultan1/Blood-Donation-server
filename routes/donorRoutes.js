@@ -4,6 +4,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const Donor = require("../models/Donor");
+const AuditLog = require("../models/AuditLog");
 const auth = require("../middleware/authMiddleware");
 const requireAdmin = require("../middleware/roleMiddleware");
 
@@ -36,10 +37,11 @@ const allowedVisibilities = (role) => {
 router.get("/search", async (req, res) => {
   try {
     const viewer = getViewerContext(req);
-    const { bloodGroup, city } = req.query;
+    const { bloodGroup, city, radiusKm, lat, lng } = req.query;
     const filters = {
       willingToDonate: true,
       visibility: { $in: allowedVisibilities(viewer.role) },
+      isDeleted: false,
     };
 
     if (bloodGroup) {
@@ -49,7 +51,35 @@ router.get("/search", async (req, res) => {
       filters["address.city"] = { $regex: city, $options: "i" };
     }
 
-    const donors = await Donor.find(filters);
+    let donors = await Donor.find(filters);
+
+    // Optional proximity filter if coordinates and radius are provided.
+    if (lat && lng && radiusKm) {
+      const latitude = parseFloat(lat);
+      const longitude = parseFloat(lng);
+      const radius = parseFloat(radiusKm);
+      if (!isNaN(latitude) && !isNaN(longitude) && !isNaN(radius)) {
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const EARTH_RADIUS_KM = 6371;
+        donors = donors.filter((d) => {
+          const dLat = d.address?.lat;
+          const dLng = d.address?.lng;
+          if (typeof dLat !== "number" || typeof dLng !== "number") return false;
+          const dLatRad = toRad(dLat - latitude);
+          const dLngRad = toRad(dLng - longitude);
+          const a =
+            Math.sin(dLatRad / 2) * Math.sin(dLatRad / 2) +
+            Math.cos(toRad(latitude)) *
+              Math.cos(toRad(dLat)) *
+              Math.sin(dLngRad / 2) *
+              Math.sin(dLngRad / 2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          const distance = EARTH_RADIUS_KM * c;
+          return distance <= radius;
+        });
+      }
+    }
+
     const results = donors.map((d) => d.toSafeObject(viewer.role, viewer.userId));
 
     return res.status(200).json({
@@ -131,6 +161,13 @@ router.post("/", async (req, res) => {
 
     const response = donor.toSafeObject(req.user.role, req.user.id);
 
+    await AuditLog.create({
+      user: req.user.id,
+      action: "create_donor",
+      targetType: "Donor",
+      targetId: donor._id.toString(),
+    });
+
     return res
       .status(201)
       .json({ success: true, message: "Donor created successfully.", data: response });
@@ -163,6 +200,7 @@ router.get("/", requireAdmin, async (req, res) => {
       filters.willingToDonate = willing === "true";
     }
 
+    filters.isDeleted = false;
     const donors = await Donor.find(filters).sort({ createdAt: -1 });
     return res.status(200).json({ success: true, message: "Donors fetched.", data: donors });
   } catch (error) {
@@ -174,7 +212,7 @@ router.get("/", requireAdmin, async (req, res) => {
 // Get current user's donor profile.
 router.get("/me", async (req, res) => {
   try {
-    const donor = await Donor.findOne({ user: req.user.id });
+    const donor = await Donor.findOne({ user: req.user.id, isDeleted: false });
     if (!donor) {
       return res.status(404).json({ success: false, message: "No donor profile found for this user." });
     }
@@ -196,7 +234,7 @@ router.get("/:id", requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid donor ID." });
     }
 
-    const donor = await Donor.findById(id);
+    const donor = await Donor.findOne({ _id: id, isDeleted: false });
     if (!donor) {
       return res.status(404).json({ success: false, message: "Donor not found." });
     }
@@ -253,7 +291,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete donor (admin only).
+// Delete donor (admin only, soft delete).
 router.delete("/:id", requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -262,10 +300,17 @@ router.delete("/:id", requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid donor ID." });
     }
 
-    const deleted = await Donor.findByIdAndDelete(id);
+    const deleted = await Donor.findByIdAndUpdate(id, { isDeleted: true });
     if (!deleted) {
       return res.status(404).json({ success: false, message: "Donor not found." });
     }
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: "delete_donor",
+      targetType: "Donor",
+      targetId: id,
+    });
 
     return res.status(200).json({ success: true, message: "Donor deleted." });
   } catch (error) {
@@ -283,7 +328,7 @@ router.get("/:id/eligibility", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid donor ID." });
     }
 
-    const donor = await Donor.findById(id);
+    const donor = await Donor.findOne({ _id: id, isDeleted: false });
     if (!donor) {
       return res.status(404).json({ success: false, message: "Donor not found." });
     }

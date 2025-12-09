@@ -26,16 +26,24 @@ const donorSchema = new mongoose.Schema({
   // Controls who can see the phone number.
   // public -> everyone; registered -> only logged-in users and admins; admin -> only admins
   phoneVisibility: { type: String, enum: ["public", "registered", "admin"], default: "registered" },
+  // Whether the donor wants to be contacted via the system for requests.
+  allowRequestContact: { type: Boolean, default: true },
+  contactPreference: { type: String, enum: ["phone", "email", "message"], default: "message" },
   address: {
     country: { type: String, default: "Bangladesh" },
     stateOrDivision: { type: String },
     city: { type: String },
     area: { type: String },
     postalCode: { type: String },
+    // Optional coordinates to enable proximity search.
+    lat: { type: Number },
+    lng: { type: Number },
   },
   lastDonationDate: { type: Date },
   totalDonations: { type: Number, default: 0 },
   notes: { type: String },
+  deferralUntil: { type: Date }, // additional deferral beyond 90-day rule
+  isDeleted: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -52,6 +60,13 @@ donorSchema.methods.isEligibleToDonate = function () {
   // If donor opted out, they are not eligible regardless of last donation date.
   if (!this.willingToDonate) {
     return { eligible: false, daysUntilEligible: null };
+  }
+
+  // If donor has an active deferral, block until that date.
+  if (this.deferralUntil && this.deferralUntil > new Date()) {
+    const diffMs = this.deferralUntil - new Date();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    return { eligible: false, daysUntilEligible: diffDays };
   }
 
   // No previous donation means they are eligible right away.
@@ -98,6 +113,8 @@ donorSchema.methods.toSafeObject = function (viewerRole = "guest", viewerId = nu
     address: this.address,
     visibility: this.visibility,
     phoneVisibility: this.phoneVisibility,
+    allowRequestContact: this.allowRequestContact,
+    contactPreference: this.contactPreference,
     totalDonations: this.totalDonations,
     lastDonationDate: this.lastDonationDate,
     createdAt: this.createdAt,
