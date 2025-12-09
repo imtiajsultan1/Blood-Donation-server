@@ -4,3 +4,4 @@ node_modules/
 npm-debug.log
 PROMPT_FOR_CODEX.md
 scripts
+seed.js
