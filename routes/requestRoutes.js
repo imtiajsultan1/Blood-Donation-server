@@ -3,8 +3,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const BloodRequest = require("../models/BloodRequest");
 const Donor = require("../models/Donor");
-const Notification = require("../models/Notification");
 const AuditLog = require("../models/AuditLog");
+const RequestMessage = require("../models/RequestMessage");
 const auth = require("../middleware/authMiddleware");
 const requireAdmin = require("../middleware/roleMiddleware");
 
@@ -73,21 +73,6 @@ router.post("/", async (req, res) => {
       req.user.role,
       req.user.id
     );
-
-    // Create notifications for matching donors who allow contact.
-    for (const donor of eligibleDonors) {
-      if (donor.user && donor.allowRequestContact) {
-        await Notification.create({
-          user: donor.user,
-          donor: donor._id,
-          type: "request_match",
-          title: "Blood request match",
-          message: `A blood request matches your profile (${bloodRequest.bloodGroup} in ${bloodRequest.city}).`,
-          meta: { requestId: bloodRequest._id },
-        });
-      }
-    }
-
     return res.status(201).json({
       success: true,
       message: "Blood request created.",
@@ -126,6 +111,21 @@ router.get("/", requireAdmin, async (req, res) => {
   } catch (error) {
     console.error("List all requests error:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching requests." });
+  }
+});
+
+// Feed of open requests (auth required).
+router.get("/feed", async (req, res) => {
+  try {
+    const requests = await BloodRequest.find({ isDeleted: false, status: "open" })
+      .populate("user", "name email role")
+      .sort({ requiredDate: 1 });
+    return res
+      .status(200)
+      .json({ success: true, message: "Open blood requests feed.", data: requests });
+  } catch (error) {
+    console.error("List feed requests error:", error);
+    return res.status(500).json({ success: false, message: "Server error while fetching feed." });
   }
 });
 
@@ -202,6 +202,71 @@ router.get("/:id/matches", async (req, res) => {
   } catch (error) {
     console.error("Get matches error:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching matches." });
+  }
+});
+
+// Send a message to the request owner (auth required).
+router.post("/:id/contact", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ success: false, message: "Message is required." });
+    }
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid request ID." });
+    }
+
+    const bloodRequest = await BloodRequest.findOne({ _id: id, isDeleted: false });
+    if (!bloodRequest) {
+      return res.status(404).json({ success: false, message: "Blood request not found." });
+    }
+
+    // Create request message to owner.
+    const msg = await RequestMessage.create({
+      fromUser: req.user.id,
+      toUser: bloodRequest.user,
+      request: bloodRequest._id,
+      message,
+    });
+
+    return res
+      .status(201)
+      .json({ success: true, message: "Message sent to request owner.", data: msg });
+  } catch (error) {
+    console.error("Send request contact error:", error);
+    return res.status(500).json({ success: false, message: "Server error while sending message." });
+  }
+});
+
+// View a specific request message (owner only or admin).
+router.get("/messages/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid message ID." });
+    }
+
+    const msg = await RequestMessage.findById(id)
+      .populate("fromUser", "name email role")
+      .populate("toUser", "name email role")
+      .populate("request", "bloodGroup city unitsNeeded requiredDate status");
+
+    if (!msg) {
+      return res.status(404).json({ success: false, message: "Message not found." });
+    }
+
+    // Only admin or the owner (toUser) can view.
+    if (req.user.role !== "admin" && msg.toUser?._id.toString() !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not authorized to view this message." });
+    }
+
+    return res.status(200).json({ success: true, message: "Message fetched.", data: msg });
+  } catch (error) {
+    console.error("Get request message error:", error);
+    return res.status(500).json({ success: false, message: "Server error while fetching message." });
   }
 });
 

@@ -37,7 +37,7 @@ const allowedVisibilities = (role) => {
 router.get("/search", async (req, res) => {
   try {
     const viewer = getViewerContext(req);
-    const { bloodGroup, city, radiusKm, lat, lng } = req.query;
+    const { bloodGroup, city } = req.query;
     const filters = {
       willingToDonate: true,
       visibility: { $in: allowedVisibilities(viewer.role) },
@@ -51,35 +51,7 @@ router.get("/search", async (req, res) => {
       filters["address.city"] = { $regex: city, $options: "i" };
     }
 
-    let donors = await Donor.find(filters);
-
-    // Optional proximity filter if coordinates and radius are provided.
-    if (lat && lng && radiusKm) {
-      const latitude = parseFloat(lat);
-      const longitude = parseFloat(lng);
-      const radius = parseFloat(radiusKm);
-      if (!isNaN(latitude) && !isNaN(longitude) && !isNaN(radius)) {
-        const toRad = (deg) => (deg * Math.PI) / 180;
-        const EARTH_RADIUS_KM = 6371;
-        donors = donors.filter((d) => {
-          const dLat = d.address?.lat;
-          const dLng = d.address?.lng;
-          if (typeof dLat !== "number" || typeof dLng !== "number") return false;
-          const dLatRad = toRad(dLat - latitude);
-          const dLngRad = toRad(dLng - longitude);
-          const a =
-            Math.sin(dLatRad / 2) * Math.sin(dLatRad / 2) +
-            Math.cos(toRad(latitude)) *
-              Math.cos(toRad(dLat)) *
-              Math.sin(dLngRad / 2) *
-              Math.sin(dLngRad / 2);
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          const distance = EARTH_RADIUS_KM * c;
-          return distance <= radius;
-        });
-      }
-    }
-
+    const donors = await Donor.find(filters);
     const results = donors.map((d) => d.toSafeObject(viewer.role, viewer.userId));
 
     return res.status(200).json({

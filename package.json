@@ -7,7 +7,6 @@
     "start": "node server.js",
     "seed": "node seed.js",
     "seed:user": "node scripts/seedUserData.js",
-    "seed:alert": "node scripts/seedTestAlerts.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
