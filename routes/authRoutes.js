@@ -18,7 +18,7 @@ const signToken = (user) => {
 // Register a new user (defaults to role "user").
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, profilePicture } = req.body;
 
     if (!name || !email || !password) {
       return res
@@ -32,8 +32,13 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email already registered." });
     }
 
+    const normalizedProfile =
+      typeof profilePicture === "string" && profilePicture.trim().length > 0
+        ? profilePicture.trim()
+        : undefined;
+
     // Create user with default "user" role.
-    const newUser = new User({ name, email, password, role: "user" });
+    const newUser = new User({ name, email, password, role: "user", profilePicture: normalizedProfile });
     await newUser.save();
 
     const token = signToken(newUser);
@@ -43,7 +48,13 @@ router.post("/register", async (req, res) => {
       message: "Registration successful.",
       data: {
         token,
-        user: { id: newUser._id, name: newUser.name, email: newUser.email, role: newUser.role },
+        user: {
+          id: newUser._id,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          profilePicture: newUser.profilePicture,
+        },
       },
     });
   } catch (error) {
@@ -68,6 +79,10 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid credentials." });
     }
 
+    if (user.isActive === false) {
+      return res.status(403).json({ success: false, message: "Account is disabled. Contact support." });
+    }
+
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(400).json({ success: false, message: "Invalid credentials." });
@@ -80,7 +95,13 @@ router.post("/login", async (req, res) => {
       message: "Login successful.",
       data: {
         token,
-        user: { id: user._id, name: user.name, email: user.email, role: user.role },
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          profilePicture: user.profilePicture,
+        },
       },
     });
   } catch (error) {

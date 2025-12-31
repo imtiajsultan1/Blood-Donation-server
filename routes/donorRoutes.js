@@ -51,7 +51,7 @@ router.get("/search", async (req, res) => {
       filters["address.city"] = { $regex: city, $options: "i" };
     }
 
-    const donors = await Donor.find(filters);
+    const donors = await Donor.find(filters).populate("user", "profilePicture");
     const results = donors.map((d) => d.toSafeObject(viewer.role, viewer.userId));
 
     return res.status(200).json({
@@ -198,7 +198,7 @@ router.get("/me", async (req, res) => {
 });
 
 // Get single donor by ID.
-router.get("/:id", requireAdmin, async (req, res) => {
+router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -206,14 +206,20 @@ router.get("/:id", requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid donor ID." });
     }
 
-    const donor = await Donor.findOne({ _id: id, isDeleted: false });
+    const donor = await Donor.findOne({ _id: id, isDeleted: false }).populate(
+      "user",
+      "profilePicture name email"
+    );
     if (!donor) {
       return res.status(404).json({ success: false, message: "Donor not found." });
     }
 
+    const donorData = donor.toObject();
+    donorData.profilePicture = donor.user?.profilePicture;
+
     return res
       .status(200)
-      .json({ success: true, message: "Donor fetched.", data: donor.toSafeObject("admin", req.user.id) });
+      .json({ success: true, message: "Donor fetched.", data: donorData });
   } catch (error) {
     console.error("Get donor error:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching donor." });
@@ -303,11 +309,6 @@ router.get("/:id/eligibility", async (req, res) => {
     const donor = await Donor.findOne({ _id: id, isDeleted: false });
     if (!donor) {
       return res.status(404).json({ success: false, message: "Donor not found." });
-    }
-
-    // Only admins or the owner can view eligibility details.
-    if (req.user.role !== "admin" && donor.user.toString() !== req.user.id) {
-      return res.status(403).json({ success: false, message: "You can only view your own donor eligibility." });
     }
 
     const eligibility = donor.isEligibleToDonate();

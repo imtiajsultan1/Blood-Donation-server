@@ -5,8 +5,11 @@ const BloodRequest = require("../models/BloodRequest");
 const Donor = require("../models/Donor");
 const AuditLog = require("../models/AuditLog");
 const RequestMessage = require("../models/RequestMessage");
+const Notification = require("../models/Notification");
+const RequestChat = require("../models/RequestChat");
 const auth = require("../middleware/authMiddleware");
 const requireAdmin = require("../middleware/roleMiddleware");
+const { messageLimiter } = require("../middleware/rateLimiter");
 
 const router = express.Router();
 
@@ -53,8 +56,11 @@ router.post("/", async (req, res) => {
       });
     }
 
+    const count = await BloodRequest.countDocuments({ user: req.user.id, isDeleted: false });
+
     const bloodRequest = new BloodRequest({
       user: req.user.id,
+      requestNumber: count + 1,
       bloodGroup,
       city,
       hospital,
@@ -90,9 +96,16 @@ router.get("/me", async (req, res) => {
     const requests = await BloodRequest.find({ user: req.user.id, isDeleted: false }).sort({
       createdAt: -1,
     });
+    // Ensure requestNumber present; if missing, assign a temporary sequence for response.
+    let seq = requests.length;
+    const withNumbers = requests.map((r, idx) => {
+      const clone = r.toObject();
+      clone.requestNumber = r.requestNumber && r.requestNumber > 0 ? r.requestNumber : requests.length - idx;
+      return clone;
+    });
     return res
       .status(200)
-      .json({ success: true, message: "Your blood requests.", data: requests });
+      .json({ success: true, message: "Your blood requests.", data: withNumbers });
   } catch (error) {
     console.error("List my requests error:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching your requests." });
@@ -117,12 +130,32 @@ router.get("/", requireAdmin, async (req, res) => {
 // Feed of open requests (auth required).
 router.get("/feed", async (req, res) => {
   try {
-    const requests = await BloodRequest.find({ isDeleted: false, status: "open" })
+    const { city } = req.query;
+    const filters = { isDeleted: false, status: "open" };
+
+    let effectiveCity = (city || "").trim();
+    if (!effectiveCity) {
+      const viewerDonor = await Donor.findOne({ user: req.user.id, isDeleted: false });
+      if (viewerDonor?.address?.city) {
+        effectiveCity = viewerDonor.address.city;
+      }
+    }
+
+    if (effectiveCity) {
+      filters.city = { $regex: effectiveCity, $options: "i" };
+    }
+
+    const requests = await BloodRequest.find(filters)
       .populate("user", "name email role")
-      .sort({ requiredDate: 1 });
+      .sort({ requiredDate: 1, createdAt: -1 });
     return res
       .status(200)
-      .json({ success: true, message: "Open blood requests feed.", data: requests });
+      .json({
+        success: true,
+        message: "Open blood requests feed.",
+        data: requests,
+        meta: { city: effectiveCity || null },
+      });
   } catch (error) {
     console.error("List feed requests error:", error);
     return res.status(500).json({ success: false, message: "Server error while fetching feed." });
@@ -205,8 +238,90 @@ router.get("/:id/matches", async (req, res) => {
   }
 });
 
+// Share donor contact details with the request owner and create a notification.
+router.post("/:id/share-info", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid request ID." });
+    }
+
+    const bloodRequest = await BloodRequest.findOne({ _id: id, isDeleted: false });
+    if (!bloodRequest) {
+      return res.status(404).json({ success: false, message: "Blood request not found." });
+    }
+
+    if (bloodRequest.status !== "open") {
+      return res.status(400).json({ success: false, message: "This request is not open anymore." });
+    }
+
+    const donor = await Donor.findOne({ user: req.user.id, isDeleted: false });
+    if (!donor) {
+      return res.status(400).json({
+        success: false,
+        message: "You need a donor profile to share your information.",
+      });
+    }
+
+    const donorDetails = {
+      id: donor._id,
+      fullName: donor.fullName,
+      phone: donor.phone,
+      email: donor.email,
+      bloodGroup: donor.bloodGroup,
+      city: donor.address?.city,
+      emergencyContactName: donor.emergencyContactName,
+      emergencyContactPhone: donor.emergencyContactPhone,
+      contactPreference: donor.contactPreference,
+      willingToDonate: donor.willingToDonate,
+      visibility: donor.visibility,
+      phoneVisibility: donor.phoneVisibility,
+    };
+
+    const requestDetails = {
+      id: bloodRequest._id,
+      requestNumber: bloodRequest.requestNumber,
+      bloodGroup: bloodRequest.bloodGroup,
+      city: bloodRequest.city,
+      hospital: bloodRequest.hospital,
+      patientName: bloodRequest.patientName,
+      unitsNeeded: bloodRequest.unitsNeeded,
+      requiredDate: bloodRequest.requiredDate,
+      contactPhone: bloodRequest.contactPhone,
+      status: bloodRequest.status,
+    };
+
+    const notification = await Notification.create({
+      user: bloodRequest.user,
+      donor: donor._id,
+      type: "request_share_info",
+      title: `Donor ${donor.fullName} shared details`,
+      message: `${donor.fullName} shared contact information for your ${bloodRequest.bloodGroup} request in ${bloodRequest.city}.`,
+      meta: { request: requestDetails, donor: donorDetails },
+    });
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: "share_request_info",
+      targetType: "Request",
+      targetId: bloodRequest._id.toString(),
+      details: { donorId: donor._id.toString() },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Your contact details were shared with the requester.",
+      data: { notification },
+    });
+  } catch (error) {
+    console.error("Share donor info error:", error);
+    return res.status(500).json({ success: false, message: "Server error while sharing information." });
+  }
+});
+
 // Send a message to the request owner (auth required).
-router.post("/:id/contact", async (req, res) => {
+router.post("/:id/contact", messageLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { message } = req.body;
@@ -224,6 +339,27 @@ router.post("/:id/contact", async (req, res) => {
       return res.status(404).json({ success: false, message: "Blood request not found." });
     }
 
+    const participants = [req.user.id.toString(), bloodRequest.user.toString()].sort();
+    let chat = await RequestChat.findOne({
+      request: bloodRequest._id,
+      participants: { $all: participants },
+    });
+
+    if (!chat) {
+      chat = await RequestChat.create({
+        request: bloodRequest._id,
+        participants,
+        pausedBy: [],
+      });
+    }
+
+    if (chat.pausedBy && chat.pausedBy.length > 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Chat is paused. Ask the other participant to resume before messaging.",
+      });
+    }
+
     // Create request message to owner.
     const msg = await RequestMessage.create({
       fromUser: req.user.id,
@@ -232,9 +368,17 @@ router.post("/:id/contact", async (req, res) => {
       message,
     });
 
+    chat.lastMessage = {
+      text: msg.message,
+      fromUser: req.user.id,
+      createdAt: msg.createdAt,
+    };
+    chat.updatedAt = new Date();
+    await chat.save();
+
     return res
       .status(201)
-      .json({ success: true, message: "Message sent to request owner.", data: msg });
+      .json({ success: true, message: "Message sent to request owner.", data: { msg, chatId: chat._id } });
   } catch (error) {
     console.error("Send request contact error:", error);
     return res.status(500).json({ success: false, message: "Server error while sending message." });

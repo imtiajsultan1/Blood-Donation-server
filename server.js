@@ -34,6 +34,9 @@ const requestRoutes = require("./routes/requestRoutes");
 const { authLimiter, searchLimiter } = require("./middleware/rateLimiter");
 const contactRoutes = require("./routes/contactRoutes");
 const adminRoutes = require("./routes/adminRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
+const chatRoutes = require("./routes/chatRoutes");
+const userRoutes = require("./routes/userRoutes");
 
 const app = express();
 
@@ -63,6 +66,9 @@ app.use("/api/institutions", institutionRoutes);
 app.use("/api/requests", requestRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/chats", chatRoutes);
+app.use("/api/users", userRoutes);
 
 // Global error handler fallback (for unexpected errors).
 app.use((err, req, res, next) => {

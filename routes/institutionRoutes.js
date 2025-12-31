@@ -73,6 +73,48 @@ router.get("/ranking", async (req, res) => {
   }
 });
 
+// Update an institution (admin only).
+router.put("/:id", requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: "Invalid institution ID." });
+    }
+
+    const updates = { ...req.body };
+    delete updates.isDeleted;
+
+    const institution = await Institution.findByIdAndUpdate(
+      id,
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!institution) {
+      return res.status(404).json({ success: false, message: "Institution not found." });
+    }
+
+    await AuditLog.create({
+      user: req.user.id,
+      action: "update_institution",
+      targetType: "Institution",
+      targetId: id,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Institution updated successfully.",
+      data: institution,
+    });
+  } catch (error) {
+    console.error("Update institution error:", error);
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: "Institution name must be unique." });
+    }
+    return res.status(500).json({ success: false, message: "Server error while updating institution." });
+  }
+});
+
 // Soft delete an institution (admin only).
 router.delete("/:id", requireAdmin, async (req, res) => {
   try {

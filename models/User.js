@@ -3,11 +3,24 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 
+const buildAvatarUrl = (seedSource) => {
+  const seed = encodeURIComponent(seedSource || "user");
+  return `https://i.pravatar.cc/150?u=${seed}`;
+};
+
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
   role: { type: String, enum: ["admin", "user"], default: "user" },
+  profilePicture: {
+    type: String,
+    default: function () {
+      return buildAvatarUrl(this.email || this.name);
+    },
+  },
+  isActive: { type: Boolean, default: true },
+  deactivatedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now },
 });
 

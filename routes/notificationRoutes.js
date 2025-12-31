@@ -10,7 +10,8 @@ router.use(auth);
 // List notifications for current user.
 router.get("/", async (req, res) => {
   try {
-    const notifs = await Notification.find({ user: req.user.id })
+    const filters = { user: req.user.id, type: "request_share_info" };
+    const notifs = await Notification.find(filters)
       .sort({ createdAt: -1 })
       .limit(100);
     return res.status(200).json({ success: true, message: "Notifications fetched.", data: notifs });
@@ -32,6 +33,21 @@ router.post("/:id/read", async (req, res) => {
   } catch (error) {
     console.error("Notification mark error:", error);
     return res.status(500).json({ success: false, message: "Server error while updating notification." });
+  }
+});
+
+// Delete a notification.
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Notification.findOneAndDelete({ _id: id, user: req.user.id });
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Notification not found." });
+    }
+    return res.status(200).json({ success: true, message: "Notification deleted.", data: deleted });
+  } catch (error) {
+    console.error("Notification delete error:", error);
+    return res.status(500).json({ success: false, message: "Server error while deleting notification." });
   }
 });
 

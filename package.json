@@ -7,6 +7,8 @@
     "start": "node server.js",
     "seed": "node seed.js",
     "seed:user": "node scripts/seedUserData.js",
+    "seed:chat": "node scripts/seedMessaging.js",
+    "seed:avatars": "node scripts/seedProfilePictures.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

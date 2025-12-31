@@ -89,24 +89,24 @@ donorSchema.methods.isEligibleToDonate = function () {
 
 // Helper to shape donor data based on who is viewing (privacy-aware response).
 donorSchema.methods.toSafeObject = function (viewerRole = "guest", viewerId = null) {
-  const isOwner = viewerId && this.user && this.user.toString() === viewerId;
+  const resolvedUserId = this.user?._id ? this.user._id.toString() : this.user?.toString();
+  const isOwner = viewerId && resolvedUserId && resolvedUserId === viewerId;
   const normalizedRole = viewerRole === "admin" ? "admin" : viewerRole === "guest" ? "guest" : "registered";
 
-  // Decide if phone can be shown.
+  // Decide if phone can be shown. For faster contact, any registered user can see phone; guests still respect visibility.
   let phoneAllowed = false;
-  if (normalizedRole === "admin") {
+  if (normalizedRole === "admin" || isOwner) {
     phoneAllowed = true;
-  } else if (isOwner) {
+  } else if (normalizedRole === "registered") {
     phoneAllowed = true;
   } else if (this.phoneVisibility === "public") {
-    phoneAllowed = true;
-  } else if (this.phoneVisibility === "registered" && normalizedRole === "registered") {
     phoneAllowed = true;
   }
 
   const base = {
     id: this._id,
     _id: this._id,
+    profilePicture: this.user?.profilePicture,
     fullName: this.fullName,
     bloodGroup: this.bloodGroup,
     willingToDonate: this.willingToDonate,
@@ -133,8 +133,11 @@ donorSchema.methods.toSafeObject = function (viewerRole = "guest", viewerId = nu
   }
 
   // Owners and admins can also see email and emergency contacts.
-  if (isOwner || normalizedRole === "admin") {
+  if (isOwner || normalizedRole === "admin" || normalizedRole === "registered") {
     base.email = this.email;
+  }
+
+  if (isOwner || normalizedRole === "admin") {
     base.emergencyContactName = this.emergencyContactName;
     base.emergencyContactPhone = this.emergencyContactPhone;
     base.notes = this.notes;
