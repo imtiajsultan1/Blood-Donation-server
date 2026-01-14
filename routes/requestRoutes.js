@@ -181,6 +181,9 @@ router.put("/:id/status", async (req, res) => {
     if (!bloodRequest) {
       return res.status(404).json({ success: false, message: "Blood request not found." });
     }
+    if (bloodRequest.user.toString() === req.user.id) {
+      return res.status(400).json({ success: false, message: "You cannot message your own request." });
+    }
 
     // Only admins or the owner can update.
     if (req.user.role !== "admin" && bloodRequest.user.toString() !== req.user.id) {
@@ -325,8 +328,9 @@ router.post("/:id/contact", messageLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const { message } = req.body;
+    const cleanMessage = message?.toString().trim();
 
-    if (!message) {
+    if (!cleanMessage) {
       return res.status(400).json({ success: false, message: "Message is required." });
     }
 
@@ -365,7 +369,7 @@ router.post("/:id/contact", messageLimiter, async (req, res) => {
       fromUser: req.user.id,
       toUser: bloodRequest.user,
       request: bloodRequest._id,
-      message,
+      message: cleanMessage,
     });
 
     chat.lastMessage = {
@@ -375,6 +379,18 @@ router.post("/:id/contact", messageLimiter, async (req, res) => {
     };
     chat.updatedAt = new Date();
     await chat.save();
+
+    await Notification.create({
+      user: bloodRequest.user,
+      type: "request_message",
+      title: "New request message",
+      message: "You received a new message about your blood request.",
+      meta: {
+        requestId: bloodRequest._id,
+        requestMessageId: msg._id,
+        chatId: chat._id,
+      },
+    });
 
     return res
       .status(201)

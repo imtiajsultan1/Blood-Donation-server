@@ -16,7 +16,7 @@ dotenv.config();
 // Keep the original connection string as a fallback in case .env is missing.
 // Please move credentials into .env for safety.
 if (!process.env.MONGO_URI) {
-  process.env.MONGO_URI = "mongodb+srv://sumaiyya:hello123@cluster0.cgylpnw.mongodb.net/?appName=Cluster0";
+  process.env.MONGO_URI = "mongodb+srv://sumaiyya:hello123@cluster0.cgylpnw.mongodb.net/sabiha_donation?appName=Cluster0";
 }
 
 // Make sure a JWT secret exists to avoid runtime signing errors.

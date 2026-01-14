@@ -4,6 +4,8 @@ const mongoose = require("mongoose");
 const ContactMessage = require("../models/ContactMessage");
 const Donor = require("../models/Donor");
 const BloodRequest = require("../models/BloodRequest");
+const Notification = require("../models/Notification");
+const User = require("../models/User");
 const auth = require("../middleware/authMiddleware");
 
 const router = express.Router();
@@ -14,8 +16,9 @@ router.use(auth);
 router.post("/", async (req, res) => {
   try {
     const { donorId, requestId, message } = req.body;
+    const cleanMessage = message?.toString().trim();
 
-    if (!donorId || !message) {
+    if (!donorId || !cleanMessage) {
       return res.status(400).json({ success: false, message: "donorId and message are required." });
     }
 
@@ -27,8 +30,11 @@ router.post("/", async (req, res) => {
     if (!donor) {
       return res.status(404).json({ success: false, message: "Donor not found." });
     }
+    if (donor.user?.toString() === req.user.id) {
+      return res.status(400).json({ success: false, message: "You cannot message yourself." });
+    }
 
-    if (!donor.allowRequestContact) {
+    if (donor.allowRequestContact === false) {
       return res.status(403).json({ success: false, message: "This donor is not accepting contact requests." });
     }
 
@@ -52,7 +58,21 @@ router.post("/", async (req, res) => {
       fromUser: req.user.id,
       toDonor: donorId,
       relatedRequest: relatedRequest ? relatedRequest._id : undefined,
-      message,
+      message: cleanMessage,
+    });
+
+    const sender = await User.findById(req.user.id).select("name email");
+    const senderLabel = sender?.name || sender?.email || "Someone";
+    await Notification.create({
+      user: donor.user,
+      donor: donor._id,
+      type: "contact_message",
+      title: "New contact message",
+      message: `${senderLabel} sent you a message.`,
+      meta: {
+        contactId: contact._id,
+        requestId: relatedRequest ? relatedRequest._id : undefined,
+      },
     });
 
     return res.status(201).json({ success: true, message: "Message sent to donor.", data: contact });

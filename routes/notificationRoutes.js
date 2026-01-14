@@ -10,7 +10,10 @@ router.use(auth);
 // List notifications for current user.
 router.get("/", async (req, res) => {
   try {
-    const filters = { user: req.user.id, type: "request_share_info" };
+    const filters = { user: req.user.id };
+    if (req.query.type) {
+      filters.type = req.query.type;
+    }
     const notifs = await Notification.find(filters)
       .sort({ createdAt: -1 })
       .limit(100);
